@@ -38,7 +38,7 @@ This proposal reserves a single, codeless 20-byte address as the **metadata sink
 
 | Purpose | Sink address |
 | --- | --- |
-| Transaction metadata | `0xda7ada7ada7ada7ada7ada7ada7ada7ada7ada7a` |
+| Transaction metadata | `0x813000000000000000000000000000000000da7a` |
 
 A **metadata call** is a call within an [EIP-8130](./eip-8130.md) transaction's `calls` (in any phase) whose `to` equals the sink address. Because the sink is codeless and [EIP-8130](./eip-8130.md) calls carry no value, a metadata call is a guaranteed no-op: no code runs, no storage is touched, no logs are emitted, and the call cannot revert into or affect any other call. A node MAY skip dispatching it entirely (recording `to` and `data` without creating a call frame); either way, the bytes remain in the signed transaction and observable state is identical. A metadata call SHOULD NOT push an otherwise-valid transaction into out-of-gas, and its `data` is indexable regardless of whether surrounding execution phases succeed or revert. The on-the-wire shape of a metadata call is identical whether or not the node skips dispatch, so indexers have the same guarantees as for any other call in `calls`.
 
@@ -84,7 +84,7 @@ A top-level `dataSuffix` field was considered. It keeps a familiar name but wide
 
 ### Vanity address
 
-The reserved address uses a mnemonic byte pattern (`0xda7a…` for "data"). It carries no meaning to clients, which treat the sink like any other codeless account.
+The reserved address encodes two mnemonics: `8130` (the EIP this transport is defined for) at the leading bytes, and `da7a` ("data") at the trailing bytes, with zero bytes in between. The zero padding also minimizes calldata cost: 4 non-zero bytes and 16 zero bytes cost 128 gas at [EIP-2028](./eip-2028.md) rates, versus 320 gas for an all-non-zero address, and the zero run compresses further in L2 rollup batches. The address carries no meaning to clients, which treat the sink like any other codeless account.
 
 ## Backwards Compatibility
 
