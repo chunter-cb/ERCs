@@ -56,7 +56,9 @@ This document defines a single descriptor:
 
 | Descriptor | Payload | Meaning |
 | --- | --- | --- |
-| `0x8021` | a complete [ERC-8021](./eip-8021.md) data suffix | The payload is [ERC-8021](./eip-8021.md) attribution, parsed per [ERC-8021](./eip-8021.md). |
+| `0x8021` | `schemaId \|\| schemaData`, the [ERC-8021](./eip-8021.md) schema data parsed forwards with the `ercMarker` omitted | The payload is [ERC-8021](./eip-8021.md) attribution. |
+
+Under `0x8021` the sink address and descriptor already identify the payload as [ERC-8021](./eip-8021.md), so the descriptor takes the role of [ERC-8021](./eip-8021.md)'s 16-byte `ercMarker`: the payload is the [ERC-8021](./eip-8021.md) schema data parsed *forwards* (`schemaId` then `schemaData`) with the `ercMarker` omitted, and because the call's `data` is length-delimited the trailing variable-length field MAY run to the end of `data`. See [ERC-8021](./eip-8021.md)'s EIP-8130 integration for this framed encoding.
 
 Future ERCs MAY define additional descriptors. The descriptor is **advisory**: a consumer that does not recognize the leading bytes, that finds no descriptor, or whose payload does not validate as the named format MUST treat the entire `data` as opaque application-defined metadata rather than failing. Because the descriptor is only a hint, a defined format SHOULD be self-validating (structurally checkable) so that a coincidental match on opaque bytes is rejected; a consumer MUST confirm the payload parses as the named format before relying on it. Applications using a private payload format SHOULD either omit the descriptor (treating `data` as wholly opaque) or use a defined descriptor, to avoid colliding with a defined format.
 
@@ -93,7 +95,7 @@ This document defines placement and association as RECOMMENDED conventions; it d
 
 For every [EIP-8130](./eip-8130.md) transaction, an indexer enumerates `calls` phase by phase, in order, and for each call:
 
-1. If `call.to` equals the sink address, records `call.data` as metadata. The indexer MAY inspect the leading 2 bytes as a content descriptor: for `0x8021`, it attempts to parse the remaining bytes as an [ERC-8021](./eip-8021.md) data suffix and, if they validate, extracts codes per [ERC-8021](./eip-8021.md). If the descriptor is unrecognized or absent, or the payload does not validate as the named format, the indexer records the raw `data` as opaque metadata rather than failing.
+1. If `call.to` equals the sink address, records `call.data` as metadata. The indexer MAY inspect the leading 2 bytes as a content descriptor: for `0x8021`, it attempts to parse the remaining bytes as [ERC-8021](./eip-8021.md) schema data (forwards, `ercMarker` omitted) and, if they validate, extracts codes per [ERC-8021](./eip-8021.md). If the descriptor is unrecognized or absent, or the payload does not validate as the named format, the indexer records the raw `data` as opaque metadata rather than failing.
 2. Otherwise treats the call as an execution call and processes it normally.
 
 Indexers process multiple metadata calls as an ordered list and SHOULD preserve each one's position relative to the surrounding execution calls, so a positional payload (such as a per-transfer memo) can be associated with the adjacent call. Metadata MUST be read from the signed `calls` regardless of per-phase execution status, since a metadata call may be skipped (for example, in a trailing phase after an earlier revert) yet still validly committed by the signer.
@@ -128,7 +130,7 @@ The reserved address uses a mnemonic byte pattern (`0xda7a…` for "data"). It c
 
 ## Backwards Compatibility
 
-This proposal applies only to [EIP-8130](./eip-8130.md) transactions and changes nothing on legacy transaction types. During the transition, indexers SHOULD continue to parse trailing-bytes data suffixes (including [ERC-8021](./eip-8021.md) builder codes) on legacy transactions while parsing metadata calls on [EIP-8130](./eip-8130.md) transactions. The [ERC-8021](./eip-8021.md) payload is carried unchanged as the bytes following the `0x8021` descriptor in a metadata call's `data`, so [ERC-8021](./eip-8021.md) parsing applies to that payload. A wallet constructing an [EIP-8130](./eip-8130.md) transaction MUST emit metadata as a metadata call, since the `calls` array has no trailing-bytes location.
+This proposal applies only to [EIP-8130](./eip-8130.md) transactions and changes nothing on legacy transaction types. During the transition, indexers SHOULD continue to parse trailing-bytes data suffixes (including [ERC-8021](./eip-8021.md) builder codes) on legacy transactions while parsing metadata calls on [EIP-8130](./eip-8130.md) transactions. On [EIP-8130](./eip-8130.md) the `0x8021` descriptor and the sink address replace [ERC-8021](./eip-8021.md)'s 16-byte `ercMarker`, so the carried payload is the [ERC-8021](./eip-8021.md) schema data (`schemaId || schemaData`) parsed forwards rather than the legacy reverse-parsed suffix; the schema semantics are otherwise unchanged. A wallet constructing an [EIP-8130](./eip-8130.md) transaction MUST emit metadata as a metadata call, since the `calls` array has no trailing-bytes location.
 
 ## Security Considerations
 
