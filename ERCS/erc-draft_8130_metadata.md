@@ -40,7 +40,7 @@ This proposal reserves a single, codeless 20-byte address as the **metadata sink
 | --- | --- |
 | Transaction metadata | `0xda7ada7ada7ada7ada7ada7ada7ada7ada7ada7a` |
 
-A **metadata call** is a call within an [EIP-8130](./eip-8130.md) transaction's `calls` (in any phase) whose `to` equals the sink address. Because the sink is codeless and [EIP-8130](./eip-8130.md) calls carry no value, a metadata call is a guaranteed no-op: no code runs, no storage is touched, no logs are emitted, and the call cannot revert into or affect any other call. A node MAY skip dispatching it entirely (recording `to` and `data` without creating a call frame); either way, the bytes remain in the signed transaction and observable state is identical. A metadata call SHOULD NOT push an otherwise-valid transaction into out-of-gas, and its `data` is indexable regardless of whether surrounding execution phases succeed or revert.
+A **metadata call** is a call within an [EIP-8130](./eip-8130.md) transaction's `calls` (in any phase) whose `to` equals the sink address. Because the sink is codeless and [EIP-8130](./eip-8130.md) calls carry no value, a metadata call is a guaranteed no-op: no code runs, no storage is touched, no logs are emitted, and the call cannot revert into or affect any other call. A node MAY skip dispatching it entirely (recording `to` and `data` without creating a call frame); either way, the bytes remain in the signed transaction and observable state is identical. A metadata call SHOULD NOT push an otherwise-valid transaction into out-of-gas, and its `data` is indexable regardless of whether surrounding execution phases succeed or revert. The on-the-wire shape of a metadata call is identical whether or not the node skips dispatch, so indexers have the same guarantees as for any other call in `calls`.
 
 ### Metadata payload
 
@@ -82,10 +82,6 @@ A single sink address requires only one reserved address and leaves `data` as pl
 
 A top-level `dataSuffix` field was considered. It keeps a familiar name but widens the transaction type and, after rollup compression, costs the same as a constant sink address. The `calls` array is already the right shape: entries are ordered, individually addressed, carry their own `data`, and need no value, so a metadata record reuses the existing structure. Using phases also allows granular metadata per set of calls, which a single top-level field cannot express.
 
-### Convention versus protocol-level support
-
-A metadata call is an ordinary [EIP-8130](./eip-8130.md) call to a reserved address dispatching to an empty account, so the sender pays the dispatch cost on top of [EIP-2028](./eip-2028.md) calldata cost. A follow-on EIP could make clients recognize the sink and skip dispatch (charging only for calldata), optionally emitting a log per metadata call for cheaper event-based indexing. The on-the-wire shape is identical under both, so adoption can begin as a convention and tighten into protocol behavior later.
-
 ### Vanity address
 
 The reserved address uses a mnemonic byte pattern (`0xda7a…` for "data"). It carries no meaning to clients, which treat the sink like any other codeless account.
@@ -96,17 +92,9 @@ This proposal applies only to [EIP-8130](./eip-8130.md) transactions and changes
 
 ## Security Considerations
 
-### The sink address must remain codeless
-
-No party can deploy code to the sink: there is no known private key, and producing a `CREATE`/`CREATE2` address collision requires ~2^160 work. Because [EIP-8130](./eip-8130.md) calls carry no value, a hypothetical collision would transfer nothing. Implementers SHOULD confirm the sink is codeless on each target chain before adoption; a protocol-level follow-on (see [Convention versus protocol-level support](#convention-versus-protocol-level-support)) would eliminate the concern by skipping dispatch regardless of code presence.
-
 ### Unverified metadata
 
 Metadata is an attestation by the signer only: it asserts that the signer committed to those bytes, not that the content is true. Consumers MUST NOT grant trust or privileges based on payload content without independent verification, and MUST sanitize untrusted bytes before use.
-
-### Public metadata
-
-All metadata is public calldata, readable by anyone. Producers MUST NOT place sensitive data in these payloads. A producer that needs privacy can carry a commitment to off-chain data (for example `keccak256(salt || metadata)` with a sufficiently long random salt) so that low-entropy content cannot be brute-forced.
 
 ## Copyright
 
