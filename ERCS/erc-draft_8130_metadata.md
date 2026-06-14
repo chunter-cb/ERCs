@@ -66,11 +66,11 @@ Future ERCs MAY define additional descriptors. The descriptor is **advisory**: a
 
 ### Data suffixes
 
-The legacy *data suffix* (arbitrary metadata appended to `tx.input`) maps directly onto this transport: it is carried as a metadata call whose `data` holds the suffix bytes, prefixed by a content descriptor when a defined format applies.
+The legacy *data suffix* (arbitrary metadata appended to `tx.input`) maps directly onto this transport: it is carried as a metadata call whose `data` holds the suffix bytes, prefixed by a content descriptor when a defined format applies. A data suffix describes the whole transaction, so it is placed as a dedicated trailing phase (see [Placement and association](#placement-and-association)).
 
-- An [ERC-8021](./eip-8021.md) data suffix MUST use descriptor `0x8021`.
+- An [ERC-8021](./eip-8021.md) data suffix SHOULD use descriptor `0x8021`. Because an [ERC-8021](./eip-8021.md) payload is self-identifying (it carries its own marker), a consumer can also recognize it without the descriptor.
 - A data suffix with no defined format is carried as opaque `data`, with no descriptor.
-- A transaction MUST contain at most one [ERC-8021](./eip-8021.md) builder code metadata call; a transaction has a single builder. Other metadata kinds MAY appear any number of times.
+- A transaction MUST contain at most one [ERC-8021](./eip-8021.md) builder code metadata call; a transaction has a single builder.
 
 ### Scope
 
@@ -93,15 +93,14 @@ A metadata call SHOULD NOT affect execution and, because a node MAY skip dispatc
 
 ### Placement and association
 
-A transaction MAY contain any number of metadata calls. A metadata call's **scope** (the calls it describes) is conveyed by its position in `calls`. Three placement levels are defined:
+A metadata call's **scope** is the phase (call array) that contains it: a metadata call tags the set of execution calls in its own phase. A phase SHOULD contain at most one metadata call, and it applies to the other calls in that phase regardless of position (wallets SHOULD place it first for readability). Two patterns follow:
 
-1. **Transaction-level**: metadata describing the whole transaction (for example an [ERC-8021](./eip-8021.md) builder code). It SHOULD be placed in its own dedicated phase containing only metadata calls, appended as the last phase of `calls`. A dedicated trailing phase keeps it out of the atomic execution phases: it cannot cause an execution phase to revert, and if an earlier phase reverts (skipping later phases) the metadata is never dispatched while remaining present in the signed `calls` for indexing.
-2. **Phase-level**: metadata describing every call in one phase (for example per-application attribution when a phase groups one application's calls). It SHOULD be placed as a metadata call at the start of that phase; consumers associate it with the other calls in the same phase.
-3. **Call-level**: metadata describing a single execution call (for example a per-transfer memo). It SHOULD be placed as a metadata call immediately before the call it annotates; consumers associate it with the next execution call.
+1. **Whole-transaction metadata (data suffix)**: metadata describing the entire transaction (most importantly an [ERC-8021](./eip-8021.md) builder code) SHOULD be placed in its own dedicated phase, containing only that single metadata call, appended as the last phase of `calls`. Having no execution calls of its own, a dedicated trailing phase scopes the whole transaction by convention; it also stays out of the atomic execution phases, so it cannot cause an execution phase to revert, and if an earlier phase reverts (skipping later phases) the metadata is never dispatched while remaining in the signed `calls` for indexing.
+2. **Per-set metadata**: metadata describing a specific set of calls (for example per-application attribution, or a memo on a group of transfers) SHOULD be placed as the single metadata call within the phase that contains those calls. To tag an individual call, place that call in its own phase together with the metadata call.
 
-This is what makes the transport useful for **batches**: a single transaction can carry independent metadata per application, per phase, or per call, and each producer (application or wallet) appends its own metadata call(s) at the appropriate level without merging into a shared field. Multiple metadata calls of different kinds and levels MAY coexist; only the at-most-one [ERC-8021](./eip-8021.md) builder code rule constrains repetition (see [Data suffixes](#data-suffixes)).
+This phase-scoped association is what makes the transport useful for **batches**: each phase can carry its own marking, and each producer (application or wallet) appends its own metadata call without merging into a shared field. Different phases MAY carry metadata of different kinds; only the at-most-one [ERC-8021](./eip-8021.md) builder code rule constrains the transaction as a whole (see [Data suffixes](#data-suffixes)).
 
-Placement and association are RECOMMENDED conventions, not protocol guarantees. Ordering MAY be significant to consumers, so wallets SHOULD order metadata calls to preserve the intended association, and consumers SHOULD treat association as a convention. This document does not mandate a single association rule, since applications may need coarser or finer scoping than phase or adjacency.
+Placement and association are RECOMMENDED conventions, not protocol guarantees; consumers SHOULD treat phase association as a convention rather than a protocol guarantee.
 
 ### Indexer behavior
 
@@ -110,7 +109,7 @@ For every [EIP-8130](./eip-8130.md) transaction, an indexer enumerates `calls` p
 1. If `call.to` equals the sink address, records `call.data` as metadata. The indexer MAY inspect the leading 2 bytes as a content descriptor: for `0x8021`, it attempts to parse the remaining bytes as an [ERC-8021](./eip-8021.md) data suffix and, if they validate, extracts codes per [ERC-8021](./eip-8021.md). If the descriptor is unrecognized or absent, or the payload does not validate as the named format, the indexer records the raw `data` as opaque metadata rather than failing.
 2. Otherwise treats the call as an execution call and processes it normally.
 
-Indexers process multiple metadata calls as an ordered list and SHOULD preserve each one's position so its scope can be recovered per [Placement and association](#placement-and-association): a metadata call in a metadata-only trailing phase as transaction-level, one at the start of a mixed phase as phase-level, and one immediately before an execution call as call-level. Metadata MUST be read from the signed `calls` regardless of per-phase execution status, since a metadata call may be skipped (for example, in a trailing phase after an earlier revert) yet still validly committed by the signer.
+For each metadata call, the indexer SHOULD recover its scope per [Placement and association](#placement-and-association): a metadata call alone in a dedicated trailing phase scopes the whole transaction; a metadata call sharing a phase with execution calls scopes that phase's calls. Metadata MUST be read from the signed `calls` regardless of per-phase execution status, since a metadata call may be skipped (for example, in a trailing phase after an earlier revert) yet still validly committed by the signer.
 
 ## Rationale
 
@@ -122,11 +121,11 @@ A per-kind family of addresses, and a mandatory leading type byte, were both con
 
 ### Reusing the `calls` array instead of a top-level field
 
-A top-level `dataSuffix` field was considered. It keeps the familiar name but widens the transaction type, and after rollup compression costs effectively the same as a constant sink address. The [EIP-8130](./eip-8130.md) `calls` array is already the right shape: entries are ordered, individually addressed, carry their own `data`, and need no value, so a metadata record reuses the existing structure rather than adding a field. The call format also allows granular metadata per call: in a batch transaction each call can carry or be annotated by its own metadata record, which a single transaction-level suffix or top-level field cannot express.
+A top-level `dataSuffix` field was considered. It keeps the familiar name but widens the transaction type, and after rollup compression costs effectively the same as a constant sink address. The [EIP-8130](./eip-8130.md) `calls` array is already the right shape: entries are ordered, individually addressed, carry their own `data`, and need no value, so a metadata record reuses the existing structure rather than adding a field. The call format also allows granular metadata per phase: in a batch transaction each phase can carry its own metadata record (and an individual call can be annotated by isolating it in its own phase), which a single transaction-level suffix or top-level field cannot express.
 
 ### Relationship to ERC-8021
 
-[ERC-8021](./eip-8021.md) defines a *payload format* for attribution: entity codes, code registries, and payout routing. This proposal defines the *transport and scope* for metadata on [EIP-8130](./eip-8130.md) transactions. They compose: an [ERC-8021](./eip-8021.md) data suffix is carried as the payload of a metadata call under descriptor `0x8021`. This proposal additionally covers cases [ERC-8021](./eip-8021.md) does not: per-call and per-phase scope ([ERC-8021](./eip-8021.md) is a single transaction-level suffix), signature binding (the metadata is part of the signed `calls` rather than mutable trailing bytes), arbitrary non-attribution metadata, and room for privacy-preserving formats.
+[ERC-8021](./eip-8021.md) defines a *payload format* for attribution: entity codes, code registries, and payout routing. This proposal defines the *transport and scope* for metadata on [EIP-8130](./eip-8130.md) transactions. They compose: an [ERC-8021](./eip-8021.md) data suffix is carried as the payload of a metadata call under descriptor `0x8021`. This proposal additionally covers cases [ERC-8021](./eip-8021.md) does not: per-phase scope, and per-call by isolating a call in its own phase ([ERC-8021](./eip-8021.md) is a single transaction-level suffix), signature binding (the metadata is part of the signed `calls` rather than mutable trailing bytes), arbitrary non-attribution metadata, and room for privacy-preserving formats.
 
 ### Extensible descriptor space
 
