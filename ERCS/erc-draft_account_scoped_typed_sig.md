@@ -1,7 +1,7 @@
 ---
 eip: TBD
 title: Account-Scoped Typed Signature Verification
-description: Two signature profiles over the EIP-8130 Keystore — a domain-constructing onchain verifier for typed data, and an account-bound personal-sign profile for offchain authentication.
+description: Two signature profiles over the EIP-8130 Keystore, a domain-constructing onchain verifier for typed data and an account-bound personal-sign profile for offchain authentication.
 author: Chris Hunter (@chunter-cb)
 discussions-to: TBD
 status: Draft
@@ -15,15 +15,15 @@ requires: 191, 712, 8130
 
 This ERC defines two signature profiles over one verification engine, the [EIP-8130](./eip-8130.md) Keystore, covering every signature flow an account produces.
 
-**Profile A (consumer-bound, typed, onchain)** defines `TypedSigVerifier`, an immutable singleton deployed at a canonical address on every chain, which verifies [EIP-712](./eip-712.md) signatures against an account's Keystore configuration. The verifier constructs the EIP-712 domain itself from values it reads onchain — `chainId` from the chain, `verifyingContract` from `msg.sender`, and the signing account as the domain `salt` — so a consuming contract cannot express an incorrect replay binding.
+**Profile A (consumer-bound, typed, onchain)** defines `TypedSigVerifier`, an immutable singleton deployed at a canonical address on every chain, which verifies [EIP-712](./eip-712.md) signatures against an account's Keystore configuration. The verifier constructs the EIP-712 domain itself from values it reads onchain (`chainId` from the chain, `verifyingContract` from `msg.sender`, and the signing account as the domain `salt`), so a consuming contract cannot express an incorrect replay binding.
 
 **Profile B (account-bound, personal-sign, offchain)** defines the digest for free-text message signing (Sign-In with Ethereum and similar flows): the [EIP-191](./eip-191.md) message hash wrapped in an [ERC-7739](./eip-7739.md) `PersonalSign` struct under a domain bound to the signing account. Offchain services verify with a single `eth_call` to the Keystore.
 
-Both profiles return the resolved actor identity and scope rather than a bare validity bit, allowing the consumer — an onchain contract or an offchain service — to make its own authorization decision. Together they replace [ERC-1271](./eip-1271.md) for new integrations: no call into account code, no per-wallet envelope, and signed content renders natively in wallets.
+Both profiles return the resolved actor identity and scope rather than a bare validity bit, allowing the consumer (an onchain contract or an offchain service) to make its own authorization decision. Together they can back an existing [ERC-1271](./eip-1271.md) surface or be used directly by new integrations: no call into account code, no per-wallet envelope, and signed content renders natively in wallets.
 
 ## Motivation
 
-EIP-712 solved digest binding in 2017: a correctly constructed domain commits to the chain and the verifying contract, and [ERC-2612](./eip-2612.md) shows the full discipline. The failure mode in practice has never been the hash construction — it has been that nothing on the verification path *enforces* it. `ecrecover` and ERC-1271 both accept arbitrary 32-byte digests, so binding correctness is re-implemented independently by every integrator, and drifts: omitted chain identifiers, domain separators cached across forks, nonconforming permit variants.
+EIP-712 solved digest binding in 2017: a correctly constructed domain commits to the chain and the verifying contract, and [ERC-2612](./eip-2612.md) shows the full discipline. The failure mode in practice has never been the hash construction; it has been that nothing on the verification path *enforces* it. `ecrecover` and ERC-1271 both accept arbitrary 32-byte digests, so binding correctness is re-implemented independently by every integrator, and drifts: omitted chain identifiers, domain separators cached across forks, nonconforming permit variants.
 
 The cost of that drift has risen sharply. CREATE2 counterfactual deployment, [EIP-7702](./eip-7702.md), and delegated agent keys mean the same signer material now controls same-address accounts across many chains and many accounts on one chain. An unbound signature is a cross-chain, cross-account skeleton key. Wallet-side mitigations (per-wallet ERC-1271 envelopes, [ERC-7739](./eip-7739.md)) restore binding at the cost of nesting, opaque rendering, and per-wallet integration.
 
@@ -54,10 +54,10 @@ Every signature is classified by its content shape (structured vs free text) and
 
 | Content | Verifier | Profile | Binding target |
 | --- | --- | --- | --- |
-| EIP-712 typed data | Onchain contract | **A** — TypedSigVerifier | Consumer (`verifyingContract = msg.sender`), account as `salt` |
+| EIP-712 typed data | Onchain contract | **A**: TypedSigVerifier | Consumer (`verifyingContract = msg.sender`), account as `salt` |
 | EIP-712 typed data | Offchain service | **A** (via `eth_call`) | Same digest; service impersonates no sender, so it names the consumer explicitly |
-| Personal-sign text | Offchain service | **B** — account-bound PersonalSign | Account (`verifyingContract = account`) |
-| Personal-sign text | Onchain contract | **Deprecated** | — |
+| Personal-sign text | Offchain service | **B**: account-bound PersonalSign | Account (`verifyingContract = account`) |
+| Personal-sign text | Onchain contract | **Deprecated** | N/A |
 
 The binding target deliberately differs: an onchain consumer is a real address that can be read from `msg.sender`, so signatures bind to it; an offchain verifier has no forgery-resistant identity, so signatures bind to the account, and service-level replay is handled in the message content (as in Sign-In with Ethereum's domain, URI, and nonce fields). These are the only two constructions; wallets and integrators MUST NOT introduce additional envelopes.
 
@@ -127,7 +127,7 @@ Wallets MUST sign the digest as standard EIP-712 typed data with the five-field 
 
 ### Profile B: account-bound personal-sign (Sign-In with Ethereum)
 
-Free-text message signing — [ERC-4361](./eip-4361.md) Sign-In with Ethereum and equivalent offchain authentication flows — uses the account-bound PersonalSign construction defined by EIP-8130's reference `AccountDomain` library and matches the account's own ERC-1271 wrap bit-for-bit:
+Free-text message signing ([ERC-4361](./eip-4361.md) Sign-In with Ethereum and equivalent offchain authentication flows) uses the account-bound PersonalSign construction defined by EIP-8130's reference `AccountDomain` library and matches the account's own ERC-1271 wrap bit-for-bit:
 
 ```solidity
 bytes32 constant PROFILE_B_DOMAIN_TYPEHASH = keccak256(
@@ -154,13 +154,13 @@ digest = keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash));
 
 An offchain service verifies by computing `digest` locally and issuing a single `eth_call` to `Keystore.authenticateActor(account, digest, auth)` on the chain named in the message, treating any revert as failure and receiving `(actorId, scope)` on success. No account code is executed for verification; counterfactual accounts with an inline k1 self (every EOA) verify with no prior deployment.
 
-The account binding (`verifyingContract = account`) makes a signature invalid for any other account sharing the same key. Cross-*service* replay is not bound in the domain — there is no forgery-resistant service identity offchain — and MUST instead be enforced in the message content, which ERC-4361's `domain`, `uri`, `nonce`, `issued-at`, and `expiration-time` fields already require; services MUST validate those fields as ERC-4361 specifies.
+The account binding (`verifyingContract = account`) makes a signature invalid for any other account sharing the same key. Cross-*service* replay is not bound in the domain (there is no forgery-resistant service identity offchain) and MUST instead be enforced in the message content, which ERC-4361's `domain`, `uri`, `nonce`, `issued-at`, and `expiration-time` fields already require; services MUST validate those fields as ERC-4361 specifies.
 
 #### Sign-in authorization
 
 Services MUST gate sign-in on `scope`, and the default MUST be the operational predicate (`scope == 0`, or `SENDER` set with `POLICY` unset): signing in *as the account* is blanket impersonation, and a policy-gated actor's authority is contextual in a way an authentication flow cannot evaluate.
 
-Because the service receives `actorId`, it MAY additionally bind the resulting session to the specific key that authenticated rather than to the account alone — distinct session policies for an admin key versus a delegate, per-key audit trails, and per-key session revocation. This is the sanctioned pattern for letting non-operational actors authenticate: a service MAY accept a policy-gated actor's signature for an *actorId-scoped* session (the agent authenticating as itself, with service-side privileges to match), while account-level sessions remain operational-only.
+Because the service receives `actorId`, it MAY additionally bind the resulting session to the specific key that authenticated rather than to the account alone: distinct session policies for an admin key versus a delegate, per-key audit trails, and per-key session revocation. This is the sanctioned pattern for letting non-operational actors authenticate: a service MAY accept a policy-gated actor's signature for an *actorId-scoped* session (the agent authenticating as itself, with service-side privileges to match), while account-level sessions remain operational-only.
 
 Future EIP-8130 scope bits specific to sign-in (e.g. a grant permitting authentication but not execution, or excluding an otherwise-operational key from sign-in) MAY be defined in the Scopes vocabulary; its append-only assignment makes this safe against deployed configurations, and services following the rules above inherit correct behavior for such bits without changes.
 
@@ -168,7 +168,7 @@ Because verification reads live Keystore state, revoking or expiring an actor in
 
 #### Counterfactual smart accounts
 
-A counterfactual smart account (CREATE2-predicted, not yet deployed) has no Keystore actor state, so Profile B verification fails until first deployment. EOAs are unaffected — the inline k1 self exists implicitly. An [ERC-6492](./eip-6492.md)-style wrapper for pre-deployment verification MAY be specified separately and does not modify this profile.
+A counterfactual smart account (CREATE2-predicted, not yet deployed) has no Keystore actor state, so Profile B verification fails until first deployment. EOAs are unaffected; the inline k1 self exists implicitly. An [ERC-6492](./eip-6492.md)-style wrapper for pre-deployment verification MAY be specified separately and does not modify this profile.
 
 ### Relationship to raw `authenticateActor`
 
@@ -199,9 +199,9 @@ The verifier is immutable, holds no storage, and is deployed via deterministic C
 
 **Scoped result over ERC-1271's boolean.** A bare magic value forces the account to decide authorization for actions it cannot see. Returning `(actorId, scope)` moves the decision to the contract that has the context, and gives it the actor identity needed for per-actor accounting such as nonce namespacing. The policy manager is deliberately excluded from the return: it is execution-time state, and a signature consumer that needs it should read it fresh from the Keystore rather than receive a value that may be stale by use time.
 
-**Two profiles, not one.** The correct binding target differs by verifier: an onchain consumer has an unforgeable identity (`msg.sender`) and gets the signature bound to it; an offchain verifier does not, so the signature binds to the account and service-level replay lives in the message content, where ERC-4361 already puts it. Collapsing to one construction would either leave onchain consumers unbound or force offchain flows to name a fictitious contract. Fixing exactly two named constructions — and reusing the account's existing ERC-1271 digest as Profile B verbatim — is what prevents the per-wallet envelope zoo from re-forming.
+**Two profiles, not one.** The correct binding target differs by verifier: an onchain consumer has an unforgeable identity (`msg.sender`) and gets the signature bound to it; an offchain verifier does not, so the signature binds to the account and service-level replay lives in the message content, where ERC-4361 already puts it. Collapsing to one construction would either leave onchain consumers unbound or force offchain flows to name a fictitious contract. Fixing exactly two named constructions (and reusing the account's existing ERC-1271 digest as Profile B verbatim) is what prevents the per-wallet envelope zoo from re-forming.
 
-**Key-aware sign-in over account-boolean sign-in.** Returning `(actorId, scope)` to an authentication service upgrades sign-in from "some key of this account validated" to "this specific key validated, with this authority": passkey login via a WebAuthn actor with no bridging infrastructure, sessions and audit trails scoped to the key that logged in, and immediate lockout on key revocation — none of which ERC-1271's magic value can express.
+**Key-aware sign-in over account-boolean sign-in.** Returning `(actorId, scope)` to an authentication service upgrades sign-in from "some key of this account validated" to "this specific key validated, with this authority": passkey login via a WebAuthn actor with no bridging infrastructure, sessions and audit trails scoped to the key that logged in, and immediate lockout on key revocation; none of which ERC-1271's magic value can express.
 
 ## Backwards Compatibility
 
